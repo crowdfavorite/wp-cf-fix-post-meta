@@ -1,0 +1,5 @@
+## 1.3a
+- Removed dependency of cf-compat.php. Now requires PHP > 5.2.0.
+- Added limited support for user_meta
+- Support for serialized data
+- Support for multiple serialized data
