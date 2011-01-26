@@ -160,17 +160,17 @@ jQuery(function() {
 		params = {'cffx_rebuild_indexes':'1',
 				  'cffx_rebuild_offset':'0'
 				 }
-		cffx_update_status('Processing post meta');
+		cffx_update_status('Processing meta data');
 		
 		// process posts
 		while(!finished) {
 			response = cffx_batch_request(batch_offset,batch_increment,metafix);
 			if(!response.result && !response.finished) {
-				cffx_update_status('Post Meta processing failed. Server said: ' + response.message);
+				cffx_update_status('Meta processing failed. Server said: ' + response.message);
 				return;
 			}
 			else if(!response.result && response.finished) {
-				cffx_update_status('Post Meta processing complete.');
+				cffx_update_status('Meta processing complete.');
 				finished = true;
 			}
 			else if(response.result) {
@@ -315,7 +315,7 @@ function cffx_fix_meta($increment=0,$offset=0) {
 	}
 	else {
 		$message = 'Processing meta values, '.number_format(($total_so_far / $total_count) * 100, 1).'% done';
-		echo json_encode(array('result'=>true,'finished'=>false,'message'=>$message));
+		echo json_encode(array('result'=>true, 'finished'=>false, 'message'=>$message));
 	}
 	exit();
 }
@@ -339,7 +339,7 @@ function cffx_fix_usermeta($increment = 0, $offset = 0) {
 	}
 	else {
 		$message = 'Processing meta values, '.number_format(($total_so_far / $total_count) * 100, 1).'% done';
-		echo json_encode(array('result'=>true,'finished'=>false,'message'=>$message));
+		echo json_encode(array('result'=>true, 'finished'=>false, 'message'=>$message));
 	}
 	exit();
 }
