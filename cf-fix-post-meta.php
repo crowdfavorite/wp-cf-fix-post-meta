@@ -2,8 +2,8 @@
 /*
 Plugin Name: Crowd Favorite Fix Post Meta
 Plugin URI: http://crowdfavorite.com
-Description: This plugin patches strings in post meta and in post GUIDs in a serialization-friendly way. Useful for changing all hard-coded references to a url or filesystem path when a WP build is migrated from one place to another, and especially useful when those strings live in PHP-serialized data, so a textual search-and-replace in the SQL dump won't work. Configure this plugin by editing the arrays at the top of its php file. Note: this plugin depends on cf-compat.php.
-Version: 1.2
+Description: This plugin patches strings in post meta, user meta and in post GUIDs in a serialization-friendly way. Useful for changing all hard-coded references to a url or filesystem path when a WP build is migrated from one place to another, and especially useful when those strings live in PHP-serialized data, so a textual search-and-replace in the SQL dump won't work. Configure this plugin by editing the arrays at the top of its php file.
+Version: 1.3a
 Author: Crowd Favorite
 Author URI: http://crowdfavorite.com
 */
@@ -72,8 +72,8 @@ function cffx_admin_menu() {
 		add_options_page(
 			__('CF Fix Postmeta')
 			, __('CF Fix Postmeta')
-			, 10
-			, basename(__FILE__)
+			, 'manage_options'
+			, basename(__FILE__, '.php')
 			, 'cffx_settings_form'
 		);
 	}
@@ -92,7 +92,7 @@ function cffx_request_handler() {
 		switch ($_POST['cf_action']) {
 			case 'cffx_fix_meta':
 				if(!is_numeric($_POST['cffx_batch_increment']) || !is_numeric($_POST['cffx_batch_offset'])) {
-					echo cf_json_encode(array('result'=>false,'message'=>'Invalid quantity or offset'));
+					echo json_encode(array('result'=>false,'message'=>'Invalid quantity or offset'));
 					exit();
 				}
 				$increment = (int) $_POST['cffx_batch_increment'];
@@ -103,7 +103,7 @@ function cffx_request_handler() {
 
 			case 'cffx_fix_attachment_guids':
 				if(!is_numeric($_POST['cffx_batch_increment']) || !is_numeric($_POST['cffx_batch_offset'])) {
-					echo cf_json_encode(array('result'=>false,'message'=>'Invalid quantity or offset'));
+					echo json_encode(array('result'=>false,'message'=>'Invalid quantity or offset'));
 					exit();
 				}
 				$increment = (int) $_POST['cffx_batch_increment'];
@@ -111,13 +111,28 @@ function cffx_request_handler() {
 				cffx_fix_attachment_guids($increment,$offset);
 				die();
 				break;
+			case 'cffx_fix_usermeta':
+				if(!is_numeric($_POST['cffx_batch_increment']) || !is_numeric($_POST['cffx_batch_offset'])) {
+					echo json_encode(array('result'=>false,'message'=>'Invalid quantity or offset'));
+					exit();
+				}
+				$increment = (int) $_POST['cffx_batch_increment'];
+				$offset = (int) $_POST['cffx_batch_offset'];
+				cffx_fix_usermeta($increment,$offset);
+				die();
+				break;
 		}
 	}
 }
 add_action('init', 'cffx_request_handler');
 
-wp_enqueue_script('jquery');
-wp_enqueue_script('cffx_admin_js', trailingslashit(get_bloginfo('url')).'?cf_action=cffx_admin_js', 'jquery');
+function cffx_enqueue_scripts() {
+	wp_enqueue_script('jquery');
+	wp_enqueue_script('cffx_admin_js', trailingslashit(get_bloginfo('url')).'?cf_action=cffx_admin_js', 'jquery');
+}
+add_action('admin_enqueue_scripts', 'cffx_enqueue_scripts');
+
+
 function cffx_admin_js() {
 	header('Content-type: text/javascript');
 ?>
@@ -137,6 +152,10 @@ jQuery(function() {
 		cffx_fix_postmeta('cffx_fix_attachment_guids');
 		return false;
 	});
+	jQuery('#cffx_fix_usermeta input').click(function() {
+		cffx_fix_postmeta('cffx_fix_usermeta');
+		return false;
+	});
 	
 	function cffx_fix_postmeta(metafix) {
 		var batch_offset = 0;
@@ -146,17 +165,17 @@ jQuery(function() {
 		params = {'cffx_rebuild_indexes':'1',
 				  'cffx_rebuild_offset':'0'
 				 }
-		cffx_update_status('Processing post meta');
+		cffx_update_status('Processing meta data');
 		
 		// process posts
 		while(!finished) {
 			response = cffx_batch_request(batch_offset,batch_increment,metafix);
 			if(!response.result && !response.finished) {
-				cffx_update_status('Post Meta processing failed. Server said: ' + response.message);
+				cffx_update_status('Meta processing failed. Server said: ' + response.message);
 				return;
 			}
 			else if(!response.result && response.finished) {
-				cffx_update_status('Post Meta processing complete.');
+				cffx_update_status('Meta processing complete.');
 				finished = true;
 			}
 			else if(response.result) {
@@ -165,7 +184,7 @@ jQuery(function() {
 			}
 		}
 	}
-	
+
 	// make a request
 	function cffx_batch_request(offset,increment,metafix) {
 		var r = jQuery.ajax({type:'post',
@@ -200,10 +219,49 @@ jQuery(function() {
 <?php
 	die();
 }
-function cffx_patch_string($string, $old_list, $new_list) {
-	$result = $string;
+
+function cffx_patch_array_values($array, $old_key, $new_key){
+	if (!is_array($array)) {
+		return str_replace($old_key, $new_key, $array);
+	}
+	$new_array = array();
+	
+	foreach ($array as $key => $value) {
+		$new_key_val = str_replace($old_key, $new_key, $key);
+		$new_array[$new_key_val] = cffx_patch_array_values($value, $old_key, $new_key);
+
+	}
+	return $new_array;
+}
+
+/**
+ * Replace Key and Values of an array with our old_list/new_list array items
+ */
+function cffx_patch_array($data, $old_list, $new_list) {
+	// Replace values then keys
 	for ($i = 0; $i < count($old_list); $i++) {
-		$result = str_replace($old_list[$i], $new_list[$i], $result);
+		$data = cffx_patch_array_values($data, $old_list[$i], $new_list[$i]);
+	}
+	return $data;
+}
+
+/**
+ * 
+ * @param mixed $data the meta_value
+ * @param array $old_list the list of substrings to search for in the meta_value
+ * @param array $new_list the list of strings to replace the old strings with
+ * 
+ * @return string The new meta_value
+ **/
+function cffx_patch_string($data, $old_list, $new_list) {
+	$result = $data;
+	if (is_array($data)) {
+		$result = cffx_patch_array($data, $old_list, $new_list);
+	}
+	else {
+		for ($i = 0; $i < count($old_list); $i++) {
+			$result = str_replace($old_list[$i], $new_list[$i], $result);
+		}
 	}
 	return $result;
 }
@@ -216,19 +274,47 @@ function cffx_get_meta_keys() {
 function cffx_fix_meta($increment=0,$offset=0) {
 	global $wpdb;
 	global $cffx_old_strings, $cffx_new_strings;
-	$rows = $wpdb->get_results("SELECT post_id, meta_value, meta_key FROM $wpdb->postmeta WHERE meta_key IN (".cffx_get_meta_keys().") LIMIT ".$offset.",".$increment);	
+	$rows = $wpdb->get_results("SELECT post_id, meta_key FROM $wpdb->postmeta WHERE meta_key IN (".cffx_get_meta_keys().") LIMIT ".$offset.",".$increment);	
 	foreach($rows as $row) {
-		$new_value = cffx_patch_string($row->meta_value, $cffx_old_strings, $cffx_new_strings);
-		update_post_meta($row->post_id, $row->meta_key, $new_value, $row->meta_value);
+		// Get post meta here instead of SQL call. This is to ensure double serialized data for example gets caught and the old_meta_value for update_post_meta is the correct value.		
+		$post_meta = get_post_meta($row->post_id, $row->meta_key, false);
+		foreach ($post_meta as $meta_value) {
+			$new_value = cffx_patch_string($meta_value, $cffx_old_strings, $cffx_new_strings);
+			update_post_meta($row->post_id, $row->meta_key, $new_value, $meta_value);
+		}
 	}
 	$total_so_far = $increment+$offset;
 	$total_count = cffx_count_meta();
 	if($total_so_far >= $total_count) {
-		echo cf_json_encode(array('result'=>false,'finished'=>true,'message'=>true));
+		echo json_encode(array('result'=>false,'finished'=>true,'message'=>true));
 	}
 	else {
 		$message = 'Processing meta values, '.number_format(($total_so_far / $total_count) * 100, 1).'% done';
-		echo cf_json_encode(array('result'=>true,'finished'=>false,'message'=>$message));
+		echo json_encode(array('result'=>true, 'finished'=>false, 'message'=>$message));
+	}
+	exit();
+}
+
+function cffx_fix_usermeta($increment = 0, $offset = 0) {
+	global $wpdb;
+	global $cffx_old_strings, $cffx_new_strings;
+	$rows = $wpdb->get_results("SELECT user_id, meta_key FROM $wpdb->usermeta WHERE meta_key IN (".cffx_get_meta_keys().") LIMIT ".$offset.",".$increment);
+	foreach($rows as $row) {
+		// Get user meta here instead of SQL call. This is to ensure double serialized data for example gets caught and the old_meta_value for update_user_meta is the correct value.		
+		$user_meta = get_user_meta($row->user_id, $row->meta_key, false);
+		foreach ($user_meta as $meta_value) {
+			$new_value = cffx_patch_string($meta_value, $cffx_old_strings, $cffx_new_strings);
+			update_user_meta($row->user_id, $row->meta_key, $new_value, $meta_value);
+		}
+	}
+	$total_so_far = $increment+$offset;
+	$total_count = cffx_count_meta();
+	if($total_so_far >= $total_count) {
+		echo json_encode(array('result'=>false,'finished'=>true,'message'=>true));
+	}
+	else {
+		$message = 'Processing meta values, '.number_format(($total_so_far / $total_count) * 100, 1).'% done';
+		echo json_encode(array('result'=>true, 'finished'=>false, 'message'=>$message));
 	}
 	exit();
 }
@@ -245,11 +331,11 @@ function cffx_fix_attachment_guids($increment=0,$offset=0) {
 	$total_so_far = $increment+$offset;
 	$total_count = cffx_count_post_attachments();
 	if($total_so_far >= $total_count) {
-		echo cf_json_encode(array('result'=>false,'finished'=>true,'message'=>true));
+		echo json_encode(array('result'=>false,'finished'=>true,'message'=>true));
 	}
 	else {
 		$message = 'Processing post attached files, '.number_format(($total_so_far / $total_count) * 100, 1).'% done.';
-		echo cf_json_encode(array('result'=>true,'finished'=>false,'message'=>$message));
+		echo json_encode(array('result'=>true,'finished'=>false,'message'=>$message));
 	}
 	exit();
 }
@@ -269,12 +355,16 @@ function cffx_count_post_attachments() {
 function cffx_settings_form() {
 	global $wpdb;
 	print('
-	<div id="wpbody">
 		<div class="wrap">
 			<h2>'.__('Crowd Favorite Fix MetaData').'</h2>
 			<form id="cffx_fix_meta" name="cffx_fix_meta" action="" method="post">
 				<p class="submit" style="border-top: none;">
 					<input type="submit" name="submit" value="'.__('Fix Meta Values').'" />
+				</p>
+			</form>
+			<form id="cffx_fix_usermeta" name="cffx_fix_usermeta" action="" method="post">
+				<p class="submit" style="border-top: none;">
+					<input type="submit" name="submit" value="'.__('Fix User Meta Values').'" />
 				</p>
 			</form>
 			<!--
@@ -293,7 +383,6 @@ function cffx_settings_form() {
 				<p></p>
 			</div>
 		</div>
-	</div>
 	');
 }
 
